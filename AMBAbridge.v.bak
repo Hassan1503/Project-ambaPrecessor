@@ -1,0 +1,728 @@
+/*
+
+Topic: Synthesis of an interface for AMBA processor interactions with the aid of Verilog HDL
+
+Designers: Mishrat Pretty Promi, ID: 1220462043
+           Kazi Safkat Taaseen, ID: 1731191043
+
+Supervisor: Iqbalur Rahman Rokon, faculty member of NSU
+*/
+
+//Designing the top-level module named Interface_AHBtoAPB
+//The design instantiates two target devices(register and RAM)
+//A time scale for the module has been defined
+`timescale 1ns/1ps
+
+module Interface_AHBtoAPB
+
+   (HCLK, HRESET, HADDR, HTRANS, HWRITE, HWDATA, HSEL, HREADYIN,
+
+   HRDATA1, HRDATA2, HREADYOUT, HRESP,
+
+   PWDATA, PENABLE,PADDR,PWRITE,
+   
+   PSELS0, PSELS1, PSELS2, PSELS3, PSELS4, PSELS5, PSELS6, PSELS7, 
+   PSELS8, PSELS9, PSELS10, PSELS11, PSELS12, PSELS13, PSELS14, PSELS15,
+   
+   PRDATA1, PRDATA2);
+    
+
+//Input/Output signals    
+  input         HCLK;          //AHB Clock
+  input         HRESET;        //AHB Reset
+  input  [31:0] HADDR;         //Address bus input
+  input  [1:0]  HTRANS;        //Transfer type
+  input         HWRITE;        //Transfer direction input
+  input  [31:0] HWDATA;        //Write data bus input
+  input         HSEL;          //Bridge master select
+  input         HREADYIN;      //Transfer ready input
+ 
+  inout  [31:0] PRDATA1;       //Read data bus input (for register)
+  inout  [31:0] PRDATA2;       //Read data bus input (for RAM)
+  
+  output [31:0] HRDATA1;       //Read data bus output (for register)
+  output [31:0] HRDATA2;       //Read data bus output (for RAM)
+  output        HREADYOUT;     //Transfer done output
+  output [1:0]  HRESP;         //Transfer response
+
+  output [31:0] PWDATA;        //Write data bus output
+  output        PENABLE;       //Strobe signal
+  output [31:0] PADDR;         //Address bus output
+  output        PWRITE;        //Transfer direction output
+
+//Peripheral select signals for APB side
+  output        PSELS0;      
+  output        PSELS1;    
+  output        PSELS2;     
+  output        PSELS3;      
+  output        PSELS4;      
+  output        PSELS5;      
+  output        PSELS6;      
+  output        PSELS7;      
+  output        PSELS8;      
+  output        PSELS9;     
+  output        PSELS10;     
+  output        PSELS11;     
+  output        PSELS12;     
+  output        PSELS13;     
+  output        PSELS14;     
+  output        PSELS15;  
+     
+
+//Output Signal types
+  reg  [31:0] HRDATA1;
+  reg  [31:0] HRDATA2;
+  reg         HREADYOUT;
+  wire [1:0]  HRESP;
+ 
+  wire        PSELS0;
+  wire        PSELS1;
+  wire        PSELS2;
+  wire        PSELS3;
+  wire        PSELS4;
+  wire        PSELS5;
+  wire        PSELS6;
+  wire        PSELS7;
+  wire        PSELS8;
+  wire        PSELS9;
+  wire        PSELS10;
+  wire        PSELS11;
+  wire        PSELS12;
+  wire        PSELS13;
+  wire        PSELS14;
+  wire        PSELS15;
+  reg  [31:0] PADDR;
+  reg  [31:0] PWDATA;        
+  reg         PENABLE;
+  reg         PWRITE;
+
+
+//Internal Signal declarations
+  wire        accept;         //Checks whether there is a valid data transfer request 
+  wire        enact;          //Enable for address and transfer direction registers 
+  reg  [31:0] rghaddr;       //HADDR register 
+  reg         rghwrite;      //HWRITE register 
+  wire [31:0] mxhaddr;       //HADDR multiplexer 
+
+  reg  [2:0]  nextstate;      //Internal registers for state machine 
+  reg  [2:0]  currentstate;
+
+  wire        enhready;       //HREADYOUT register input 
+  wire        actAPB;         //APB output registers enable 
+  wire        enpenable;      //PENABLE register input 
+  reg         rgpwrite;      //PWRITE register input
+  
+//Internal peripheral select signals
+  reg         intpsels0;      
+  reg         intpsels1;      
+  reg         intpsels2;      
+  reg         intpsels3;      
+  reg         intpsels4;     
+  reg         intpsels5;     
+  reg         intpsels6;      
+  reg         intpsels7;      
+  reg         intpsels8;      
+  reg         intpsels9;      
+  reg         intpsels10;     
+  reg         intpsels11;     
+  reg         intpsels12;     
+  reg         intpsels13;     
+  reg         intpsels14;     
+  reg         intpsels15;     
+
+//PSEL combination signals
+  reg         adds0;      
+  reg         adds1;
+  reg         adds2;
+  reg         adds3;
+  reg         adds4;
+  reg         adds5;
+  reg         adds6;
+  reg         adds7;
+  reg         adds8;
+  reg         adds9;
+  reg         adds10;
+  reg         adds11;
+  reg         adds12;
+  reg         adds13;
+  reg         adds14;
+  reg         adds15;
+
+//Internal PSEL outputs  
+  reg         regs0;        
+  reg         regs1;
+  reg         regs2;
+  reg         regs3;
+  reg         regs4;
+  reg         regs5;
+  reg         regs6;
+  reg         regs7;
+  reg         regs8;
+  reg         regs9;
+  reg         regs10;
+  reg         regs11;
+  reg         regs12;
+  reg         regs13;
+  reg         regs14;
+  reg         regs15;
+
+   
+//Constant declarations for different states 
+  parameter IDLE =  3'b000;
+  parameter READ = 3'b001;
+  parameter READOK =  3'b101;
+  parameter WWRITE = 3'b010;
+  parameter WRITE =  3'b011;
+  parameter WRITEOK =  3'b110;
+  parameter PNDWRITE =  3'b100;
+  parameter PNDWRITEOK =  3'b111;
+
+//Constant declarations for address decoding 
+  parameter consts0 =  4'b0000;
+  parameter consts1 =  4'b0001;
+  parameter consts2 = 4'b0010;
+  parameter consts3 = 4'b0011;
+  parameter consts4 = 4'b0100;
+  parameter consts5 = 4'b0101;
+  parameter consts6 = 4'b0110;
+  parameter consts7 = 4'b0111;
+  parameter consts8 = 4'b1000;
+  parameter consts9 = 4'b1001;
+  parameter consts10 = 4'b1010;
+  parameter consts11 = 4'b1011;
+  parameter consts12 = 4'b1100;
+  parameter consts13 = 4'b1101;
+  parameter consts14 = 4'b1110;
+  parameter consts15 = 4'b1111;
+
+//Constant declarations for transfer type signal
+  parameter idle = 2'b00;
+  parameter busy = 2'b01;
+  parameter nonseq = 2'b10;
+  parameter seq = 2'b11;
+
+//Constant declarations for transfer response signal
+  parameter okay = 2'b00;
+  parameter error = 2'b01;
+  parameter retry = 2'b10;
+  parameter split = 2'b11;
+
+
+//Beginning of main code
+//valid AHB transfers only take place when a non-sequential or sequential transfer is requested on HTRANS 
+ assign accept = (HSEL == 1'b1 && HREADYIN == 1'b1 && 
+                  (HTRANS == nonseq || HTRANS == seq))? 1'b1 : 1'b0;
+
+
+//Enable address and transfer direction register
+  assign enact = HSEL & HREADYIN;
+
+  always @ (negedge HRESET or posedge HCLK)
+    begin 
+      if (!HRESET)
+        begin 
+          rghaddr <= 32'b0;
+          rghwrite <= 1'b0;
+        end
+      else
+        begin
+          if (enact)
+            begin 
+              rghaddr <= HADDR;
+              rghwrite <= HWRITE;
+            end 
+        end 
+    end 
+
+
+//Assigning the value of muxhaddr which indicates the source of current APB transfer
+//the address source is
+// - reghaddr if the transfer is being generated from the pipelined register
+// - HADDR if the transfer is being generated from the AHB inputs 
+ assign mxhaddr = (nextstate == READ &&
+                      (currentstate == IDLE || currentstate == READOK ||
+                       currentstate == WRITEOK))? HADDR : rghaddr;
+
+
+//Next state logic for APB state machine
+ always @ (currentstate or HWRITE or rghwrite or accept)
+    begin 
+
+      case (currentstate)
+        IDLE :                 //Idle state
+          if (accept)
+            if (HWRITE)
+              nextstate = WWRITE;
+            else
+              nextstate = READ;
+          else
+            nextstate = IDLE;
+   
+        READ :                 //Read setup
+          nextstate = READOK;
+
+        WWRITE :                //Wait for one cycle before write
+          if (accept)
+            nextstate = PNDWRITE;
+          else
+            nextstate = WRITE;
+   
+        WRITE :                //Write setup
+          if (accept)
+            nextstate = PNDWRITEOK;
+          else
+            nextstate = WRITEOK;
+   
+        PNDWRITE :               //Write setup with pending transfer
+          nextstate = PNDWRITEOK;
+
+        READOK :              //Read enable
+          if (accept)
+            if (HWRITE)
+              nextstate = WWRITE;
+            else
+              nextstate = READ;
+          else
+            nextstate = IDLE;
+   
+        WRITEOK :              //Write enable
+          if (accept)
+            if (HWRITE)
+              nextstate = WWRITE;
+            else
+              nextstate = READ;
+          else
+            nextstate = IDLE;
+   
+        PNDWRITEOK :             //Write enable with pending transfer
+          if (rghwrite)
+            if (accept)
+              nextstate = PNDWRITE;
+            else
+              nextstate = WRITE;
+          else
+            nextstate = READ;
+   
+        default  :
+          nextstate = IDLE;    //Return to IDLE by default
+
+      endcase
+    end 
+
+
+//State machine
+//using asynchronous reset
+  always @ (negedge HRESET or posedge HCLK)
+    begin 
+      if (!HRESET)
+        currentstate <= IDLE;
+      else
+        currentstate <= nextstate;
+    end 
+
+
+// APB address decoding for slave devices
+  always @ (mxhaddr)
+    begin 
+      // Default values
+      intpsels0  = 1'b0;
+      intpsels1  = 1'b0;
+      intpsels2  = 1'b0;
+      intpsels3  = 1'b0;
+      intpsels4  = 1'b0;
+      intpsels5  = 1'b0;
+      intpsels6  = 1'b0;
+      intpsels7  = 1'b0;
+      intpsels8  = 1'b0;
+      intpsels9  = 1'b0;
+      intpsels10 = 1'b0;
+      intpsels11 = 1'b0;
+      intpsels12 = 1'b0;
+      intpsels13 = 1'b0;
+      intpsels14 = 1'b0;
+      intpsels15 = 1'b0;
+      
+      case (mxhaddr[31:28])
+        consts0 : 
+          intpsels0 = 1'b1;
+
+        consts1 :
+           intpsels1 = 1'b1;    
+
+        consts2 : 
+          intpsels2 = 1'b1;
+
+        consts3 : 
+          intpsels3 = 1'b1;
+
+        consts4 : 
+          intpsels4 = 1'b1;
+
+        consts5 : 
+          intpsels5 = 1'b1;
+
+        consts6 : 
+          intpsels6 = 1'b1;
+
+        consts7 : 
+          intpsels7 = 1'b1;
+
+        consts8 : 
+          intpsels8 = 1'b1;
+
+        consts9 : 
+          intpsels9 = 1'b1;
+
+        consts10 : 
+          intpsels10 = 1'b1;
+
+        consts11 : 
+          intpsels11 = 1'b1;
+
+        consts12 : 
+          intpsels12 = 1'b1;
+
+        consts13 : 
+          intpsels13 = 1'b1;
+
+        consts14 : 
+          intpsels14 = 1'b1;
+
+        consts15 : 
+          intpsels15 = 1'b1;
+       
+      endcase
+    end 
+
+
+//APB enable generation
+//it is used to enable the PSEL, PWRITE and PADDR APB output registers
+   assign actAPB = (nextstate == READ || nextstate == WRITE || 
+                    nextstate == PNDWRITE)? 1'b1 : 1'b0;
+
+
+//Internal PSEL outputs generation
+  always @ (actAPB or nextstate or intpsels0 or intpsels1 or intpsels2 or 
+            intpsels3 or intpsels4 or intpsels5 or intpsels6 or 
+            intpsels7 or intpsels8 or intpsels9 or intpsels10 or 
+            intpsels11 or intpsels12 or intpsels13 or intpsels14 or 
+            intpsels15 or regs0 or regs1 or regs2 or regs3 or 
+            regs4 or regs5 or regs6 or regs7 or regs8 or 
+            regs9 or regs10 or regs11 or regs12 or regs13 or regs14 or regs15)
+    begin 
+      if (actAPB)
+        begin 
+          adds0  = intpsels0;
+          adds1  = intpsels1;
+          adds2  = intpsels2;
+          adds3  = intpsels3;
+          adds4  = intpsels4;
+          adds5  = intpsels5;
+          adds6  = intpsels6;
+          adds7  = intpsels7;
+          adds8  = intpsels8;
+          adds9  = intpsels9;
+          adds10 = intpsels10;
+          adds11 = intpsels11;
+          adds12 = intpsels12;
+          adds13 = intpsels13;
+          adds14 = intpsels14;
+          adds15 = intpsels15;
+        end
+          else if ((nextstate == IDLE || nextstate == WWRITE))
+            begin 
+              adds0  = 1'b0;
+              adds1  = 1'b0;
+              adds2  = 1'b0;
+              adds3  = 1'b0;
+              adds4  = 1'b0;
+              adds5  = 1'b0;
+              adds6  = 1'b0;
+              adds7  = 1'b0;
+              adds8  = 1'b0;
+              adds9  = 1'b0;
+              adds10 = 1'b0;
+              adds11 = 1'b0;
+              adds12 = 1'b0;
+              adds13 = 1'b0;
+              adds14 = 1'b0;
+              adds15 = 1'b0;
+            end
+          else
+            begin
+              adds0  = regs0;
+              adds1  = regs1;
+              adds2  = regs2;
+              adds3  = regs3;
+              adds4  = regs4;
+              adds5  = regs5;
+              adds6  = regs6;
+              adds7  = regs7;
+              adds8  = regs8;
+              adds9  = regs9;
+              adds10 = regs10;
+              adds11 = regs11;
+              adds12 = regs12;
+              adds13 = regs13;
+              adds14 = regs14;
+              adds15 = regs15;
+            end 
+    end 
+ 
+
+//Driving PSEL outputs with internal combinational versions
+  always @ (negedge HRESET or posedge HCLK)
+    begin 
+      if (!HRESET)
+        begin 
+          regs0  <= 1'b0;
+          regs1  <= 1'b0;
+          regs2  <= 1'b0;
+          regs3  <= 1'b0;
+          regs4  <= 1'b0;
+          regs5  <= 1'b0;
+          regs6  <= 1'b0;
+          regs7  <= 1'b0;
+          regs8  <= 1'b0;
+          regs9  <= 1'b0;
+          regs10 <= 1'b0;
+          regs11 <= 1'b0;
+          regs12 <= 1'b0;
+          regs13 <= 1'b0;
+          regs14 <= 1'b0;
+          regs15 <= 1'b0;
+        end
+      else
+        begin
+          regs0  <= adds0;
+          regs1  <= adds1;
+          regs2  <= adds2;
+          regs3  <= adds3;
+          regs4  <= adds4;
+          regs5  <= adds5;
+          regs6  <= adds6;
+          regs7  <= adds7;
+          regs8  <= adds8;
+          regs9  <= adds9;
+          regs10 <= adds10;
+          regs11 <= adds11;
+          regs12 <= adds12;
+          regs13 <= adds13;
+          regs14 <= adds14;
+          regs15 <= adds15;
+        end 
+    end 
+
+
+//Driving PSEL outputs with internal signals
+  assign PSELS0  = regs0;
+  assign PSELS1  = regs1;
+  assign PSELS2  = regs2;
+  assign PSELS3  = regs3;
+  assign PSELS4  = regs4;
+  assign PSELS5  = regs5;
+  assign PSELS6  = regs6;
+  assign PSELS7  = regs7;
+  assign PSELS8  = regs8;
+  assign PSELS9  = regs9;
+  assign PSELS10 = regs10;
+  assign PSELS11 = regs11;
+  assign PSELS12 = regs12;
+  assign PSELS13 = regs13;
+  assign PSELS14 = regs14;
+  assign PSELS15 = regs15;
+
+
+//Address output bus PADDR generation
+  always @ (negedge HRESET or posedge HCLK)
+    begin 
+      if (!HRESET)
+        PADDR <= 28'b0;
+      else
+        begin
+          if (actAPB)
+            PADDR <= mxhaddr;
+        end 
+    end 
+
+
+//PWRITE generation
+  always @ (currentstate or rghwrite)
+    begin 
+      case (currentstate)
+        WWRITE :
+          rgpwrite = 1'b1;
+
+        PNDWRITE : 
+          begin
+          if (rghwrite)
+            rgpwrite = 1'b1;
+          else
+            rgpwrite = 1'b0;
+        end
+
+        default: 
+          rgpwrite = 1'b0;
+      endcase
+    end 
+
+  always @ (negedge HRESET or posedge HCLK)
+    begin 
+      if (!HRESET)
+        PWRITE <= 1'b0;
+      else
+        begin
+          if (actAPB)
+            PWRITE <= rgpwrite;
+        end 
+    end 	
+
+
+//Write data output PWDATA generation
+  always @ (negedge HRESET or posedge HCLK)
+    begin 
+      if (!HRESET)
+        PWDATA <= 32'b0;
+      else
+        begin
+          if (nextstate == WRITEOK || nextstate == PNDWRITEOK)
+            PWDATA <= HWDATA;
+        end
+    end 
+
+
+//PENABLE output is set HIGH during any of the three ENABLE states.
+ assign enpenable = (nextstate == READOK || 
+                     nextstate == WRITEOK || 
+                     nextstate == PNDWRITEOK)? 1'b1 : 1'b0;
+
+  always @ (negedge HRESET or posedge HCLK)
+    begin 
+      if (!HRESET)
+        PENABLE <= 1'b0;
+      else
+        PENABLE <= enpenable;
+    end 
+
+
+//HREADYOUT generation
+  assign enhready = (nextstate == READOK || nextstate == WRITEOK ||
+                     nextstate == PNDWRITEOK || nextstate == IDLE)? 1'b1 : 1'b0;
+
+  always @ (negedge HRESET or posedge HCLK)
+    begin 
+      if (!HRESET)
+        HREADYOUT <= 1'b1;
+      else
+        HREADYOUT <= enhready;
+    end 
+
+
+//Read output HRDATA generation
+  always @ (negedge HRESET or posedge HCLK)
+    begin 
+      if (!HRESET)
+        begin
+          HRDATA1 <= 32'b0;
+          HRDATA2 <= 32'b0;
+        end
+      
+      else
+        begin
+         if (nextstate == READOK)
+          begin  
+           HRDATA1 <= PRDATA1;
+           HRDATA2 <= PRDATA2;
+          end
+        end
+    end
+
+
+//The response will always be ok to show that the transfer has been performed successfully
+  assign HRESP = okay;
+
+
+//Instantiating the register
+ target_register treg1(HCLK, PSELS0, PWRITE, PWDATA, PRDATA1);
+
+
+//Instantiating the RAM
+ target_ram tram1(HCLK, PSELS1, PWRITE, PADDR[27:23], PWDATA, PRDATA2);
+
+
+endmodule     //End of main code (Interface between AHB and APB)
+
+
+
+//Designing the register named target_register
+module target_register (ck, en, w, si, po);
+
+//Input/Output ports 
+  input  ck; 
+  input en; 
+  input w;
+  input [31:0] si;
+
+  output [31:0]  po;
+  reg [31:0] po;        //Declare parallel output as register type
+
+
+//Internal registers
+  reg [31:0] content;    //Content of the register
+  reg t;
+
+  integer i;   //Integer declaration for loop	
+
+
+//Beginning of main code
+  always @(posedge ck)
+   begin
+    if (en)
+      begin 
+        if(w)
+          begin
+            for (i=31;i>=0;i=i-1)
+              begin
+                t = si[i];
+                  content = {content[30:0], t};
+              end
+            end
+          else
+            po = content;
+        end
+      end
+
+endmodule         //End of register code	
+
+
+
+//Designing the RAM named target_ram
+module target_ram (c, enb, we, addr, di, do);
+
+//Input/Output ports
+  input  c;
+  input  we;
+  input  enb;
+  input [4:0] addr;
+  input  [31:0] di;
+
+  output [31:0] do;
+  reg [31:0] do; 
+
+//Array declaration for RAM
+  reg [31:0] RAM [31:0];
+
+
+//Beginning of main code
+  always @(posedge c)
+   begin
+    if (enb)
+      begin
+        if (we)
+          RAM[addr] <= di;
+    else  
+      do <= RAM[addr];
+  end
+ end
+
+endmodule                //End of RAM code
